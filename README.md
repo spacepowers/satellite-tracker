@@ -27,6 +27,7 @@ This version is an original creation from scratch using Claude AI.
 
 **Primary satellites** (for example, the International Space Station)
 - Load one or many satellites and tick the ones to plot
+- If the list was opened from a file or pasted, an "Update ticked satellites from CelesTrak" button downloads the latest orbit data for each ticked satellite individually and uses it in the application. The file itself is not changed, and the updates are remembered with your saved settings until you load a new list
 - Select one as the primary satellite: from the dropdown, or by clicking its icon on the map
 - Detail box: name, catalog number, inclination, altitude, orbital period, illumination, and the predicted **Sun AOS** and **Sun LOS** (entering and leaving sunlight)
 - Status bar under the map: UTC time, local time, and the satellite's latitude, longitude and altitude
@@ -35,6 +36,7 @@ This version is an original creation from scratch using Claude AI.
 - Load a second list and tick the satellites to plot
 - A dashed circle for each shows where the primary satellite has line of sight to that secondary (not blocked by the Earth)
 - A table shows, for each ticked secondary: in view or out of view, the off-nadir angle from the secondary to the primary (shown only while in view), and the next AOS and LOS
+- If the list was opened from a file or pasted, an "Update ticked satellites from CelesTrak" button downloads the latest orbit data for each ticked satellite individually and uses it in the application. The file itself is not changed, and the updates are remembered with your saved settings until you load a new list
 
 **Ground station**
 - Enter a name, latitude, longitude and minimum elevation, click on the map, or use your browser's location
@@ -86,7 +88,7 @@ Any other address that returns a supported format works, as long as the server a
 
 To avoid unnecessary requests, the page keeps the last downloaded data and only downloads again when it is more than 24 hours old. The Fetch buttons always download immediately.
 
-The page also follows [CelesTrak's usage policy](https://celestrak.org/usage-policy.php) for error responses. If CelesTrak answers with HTTP 301, 403, 404 or any 50x error (or an error reply the browser cannot read), the page shows a warning, stops all CelesTrak queries for one hour (including the Fetch buttons, and across page reloads), and keeps using the last data it has. If you see this warning, check that your web addresses match the current [CelesTrak documentation](https://celestrak.org/NORAD/documentation/gp-data-formats.php).
+The page also follows [CelesTrak's usage policy](https://celestrak.org/usage-policy.php) for error responses. If CelesTrak answers with HTTP 301, 403, 404 or any 50x error, the page shows a warning, stops all CelesTrak queries for one hour (including the Fetch buttons, and across page reloads), and keeps using the last data it has. If you see this warning, check that your web addresses match the current [CelesTrak documentation](https://celestrak.org/NORAD/documentation/gp-data-formats.php).
 
 ## Using the application
 
