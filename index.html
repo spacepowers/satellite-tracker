@@ -48,6 +48,7 @@
         <small>Tick the primary satellites to plot. The selected satellite is always plotted.</small></div>
       <div id="s1List" class="row"></div>
       <textarea id="txt" spellcheck="false" aria-label="Orbit data"></textarea>
+      <small>Edits here take effect when you click "Load pasted data". After a CelesTrak update this box is rewritten to show the data in use; updated satellites appear exactly as CelesTrak sent them.</small>
       <div class="row">
         <button id="load">Load pasted data</button>
         <label>Open file: <input type="file" id="file"></label>
@@ -65,6 +66,7 @@
         <label>Open file: <input type="file" id="s2File"></label>
       </div>
       <textarea id="txt2" spellcheck="false" aria-label="Secondary orbit data" placeholder="Or paste TLE / OMM data for the secondary satellites here, then click Load pasted secondaries"></textarea>
+      <small>Edits here take effect when you click "Load pasted secondaries". After a CelesTrak update this box is rewritten to show the data in use; updated satellites appear exactly as CelesTrak sent them.</small>
       <div class="row"><button id="s2Load">Load pasted secondaries</button>
         <button id="s2All">Select all</button><button id="s2None">Select none</button>
         <button id="s2Update" hidden>Update ticked satellites from CelesTrak</button>
@@ -106,7 +108,7 @@ const SAMPLE = `ISS (ZARYA)
 2 25544  51.6400 120.0000 0005000  90.0000 270.0000 15.50000000400000`;
 const RAD = Math.PI / 180, RE = 6378.137;
 const A5 = "ABCDEFGHJKLMNPQRSTUVWXYZ";
-let sunState = "n/a", sats = [], selected = 0, land = null, gs = null, pickMode = false, secs = [], secOver = {}, priOver = {}, relaySpan = "";
+let sunState = "n/a", sats = [], selected = 0, land = null, gs = null, pickMode = false, secs = [], relaySpan = "";
 const esc = t => String(t).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const PALETTE = ["#ff9800", "#00e5ff", "#b39ddb", "#4d8dff", "#d7a86e", "#80cbc4", "#f48fb1", "#c5e1a5"];
 
@@ -182,7 +184,11 @@ function parseInput(text) {
       o[k] = m[2].replace(/\s*\[[^\]]*\]\s*$/, "");
     }
     if (o && o.EPOCH) out.push(o);
-    return out.map(ommToTle);
+    const res = out.map(ommToTle);
+    // Keep each object's original text (header included) so it can be shown exactly as received
+    const parts = text.split(/^(?=[ \t]*CCSDS_OMM_VERS[ \t]*=)/im).filter(x => x.trim());
+    if (parts.length === res.length) res.forEach((r, i) => { r.raw = parts[i].trim(); });
+    return res;
   }
   const lines = text.split(/\r?\n/).map(s => s.trimEnd()).filter(s => s.trim());
   const out = [];
@@ -201,7 +207,9 @@ function makeSat(t) {
   const l1 = "1 " + num + t.l1.slice(7), l2 = "2 " + num + t.l2.slice(7);
   const rec = satellite.twoline2satrec(l1, l2);
   if (rec.error) throw new Error("Invalid elements for " + t.name);
-  return { name: t.name, cat: n, rec, period: 2 * Math.PI / rec.no, incl: rec.inclo / RAD };
+  const yy = parseInt(l1.slice(18, 20), 10), yr = yy < 57 ? 2000 + yy : 1900 + yy;
+  const epoch = Date.UTC(yr, 0, 1) + (parseFloat(l1.slice(20, 32)) - 1) * 864e5;
+  return { name: t.name, tle: t, cat: n, rec, epoch, period: 2 * Math.PI / rec.no, incl: rec.inclo / RAD };
 }
 // Secondary satellites ticked by default when there is no saved selection
 const DEFAULT_SEC = /^TDRS[\s-]*(7|11|12)\b/i;
@@ -226,10 +234,6 @@ function loadText(text, pick) {
   try {
     const list = parseInput(text).map(makeSat);
     if (!list.length) throw new Error("No satellite data found.");
-    list.forEach(q => {   // per-satellite updates downloaded earlier take precedence over the loaded list
-      const o = priOver[q.cat];
-      if (o) try { const n = makeSat(o); q.rec = n.rec; q.period = n.period; q.incl = n.incl; } catch (e) {}
-    });
     sats = list; selected = 0;
     const sel = document.getElementById("sel");
     sel.innerHTML = "";
@@ -482,6 +486,7 @@ function info(sat, p, now) {
     `<div>Inclination: <b>${sat.incl.toFixed(2)}°</b></div>` +
     `<div>Altitude: <b>${p ? p.alt.toFixed(1) + " km" : "n/a"}</b> &nbsp; Period: <b>${sat.period.toFixed(1)} min</b></div>` +
     `<div>Illumination: <b>${sunState}</b></div>` +
+    `<div>Orbit data epoch: <b>${fmtT(sat.epoch)}</b> (${ageD(sat.epoch, now.getTime())} old${sat.upd ? "; updated from CelesTrak" : ""})</div>` +
     `<div>Sun AOS: <b>${sunAos}</b></div>` +
     `<div>Sun LOS: <b>${sunLos}</b></div>` +
     (p ? "" : `<div style="color:#f90">Propagation failed (elements may be too old).</div>`);
@@ -490,17 +495,17 @@ function info(sat, p, now) {
 /* ---------- UI ---------- */
 const txt = document.getElementById("txt");
 let src1 = { type: "default", url: "" }, src2 = { type: "default", url: "" };
-document.getElementById("load").onclick = () => { src1 = { type: "text", url: "" }; priOver = {}; loadText(txt.value); draw(); };
+document.getElementById("load").onclick = () => { src1 = { type: "text", url: "" }; loadText(txt.value); draw(); };
 document.getElementById("sel").onchange = e => selectSat(+e.target.value);
 document.getElementById("s1All").onclick = () => { sats.forEach(q => { q.show = true; q.cb.checked = true; }); draw(); };
 document.getElementById("s1None").onclick = () => { sats.forEach((q, i) => { q.show = i === selected; q.cb.checked = q.show; }); draw(); };
 document.getElementById("file").onchange = e => {
   const f = e.target.files[0]; if (!f) return;
-  f.text().then(t => { txt.value = t; src1 = { type: "text", url: "" }; priOver = {}; loadText(t); draw(); });
+  f.text().then(t => { txt.value = t; src1 = { type: "text", url: "" }; loadText(t); draw(); });
 };
 document.getElementById("fetch").onclick = () =>
   fetchText(document.getElementById("url").value)
-    .then(t => { txt.value = t; src1 = { type: "url", url: document.getElementById("url").value, at: Date.now() }; priOver = {}; loadText(t); draw(); })
+    .then(t => { txt.value = t; src1 = { type: "url", url: document.getElementById("url").value, at: Date.now() }; loadText(t); draw(); })
     .catch(e => { if (!e.handled) document.getElementById("msg").textContent = "Download failed" + (e.status ? ": " + httpDesc(e.status) : "") + " (check the address and your connection)."; });
 cv.addEventListener("click", e => {
   const r = cv.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
@@ -555,6 +560,7 @@ function predictPass(prim, q, t0) {
   }
   return res;
 }
+const ageD = (e, n) => ((n - e) / 864e5).toFixed(1) + " d";
 const fmtT = t => new Date(t).toISOString().slice(5, 19).replace("T", " ") + " UTC";
 function fmtD(ms) {
   ms = Math.max(0, Math.round(ms / 1000));
@@ -587,10 +593,10 @@ function updatePred(sat, now) {
     const aos = q.inView ? "in view now" + (r && r.aos !== null ? " (next pass " + fmtT(r.aos) + ")" : "")
       : r && r.aos !== null ? fmtT(r.aos) + " (in " + fmtD(r.aos - t) + ")" : "none within 24 h";
     const los = r && r.los !== null ? fmtT(r.los) + " (in " + fmtD(r.los - t) + ")" : q.inView ? "beyond 24 h" : "none within 24 h";
-    return `<tr style="color:${q.color}"><td style="${td}">${esc(q.name)}</td><td style="${td}">${q.inView ? "IN VIEW" : "out of view"}</td><td style="${td}">${q.inView && nad !== null ? nad.toFixed(1) + "°" : ""}</td><td style="${td}">${rng !== null ? Math.round(rng).toLocaleString("en-US") + " km" : ""}</td><td style="${td}">${aos}</td><td style="${td}">${los}</td></tr>`;
+    return `<tr style="color:${q.color}"><td style="${td}">${esc(q.name)}</td><td style="${td}">${q.inView ? "IN VIEW" : "out of view"}</td><td style="${td}">${q.inView && nad !== null ? nad.toFixed(1) + "°" : ""}</td><td style="${td}">${rng !== null ? Math.round(rng).toLocaleString("en-US") + " km" : ""}</td><td style="${td}">${fmtT(q.epoch)} (${ageD(q.epoch, t)} old${q.upd ? "; updated" : ""})</td><td style="${td}">${aos}</td><td style="${td}">${los}</td></tr>`;
   }).join("");
   box.innerHTML = `<small>${esc(sat.name)}: next AOS and LOS for each secondary (Earth-limb line of sight, next 24 h)</small>` +
-    `<table style="border-collapse:collapse"><tr style="color:#888;text-align:left"><th style="${td}">Secondary</th><th style="${td}">Status</th><th style="${td}">Off-nadir</th><th style="${td}">Range</th><th style="${td}">Next AOS</th><th style="${td}">Next LOS</th></tr>${rows}</table>`;
+    `<table style="border-collapse:collapse"><tr style="color:#888;text-align:left"><th style="${td}">Secondary</th><th style="${td}">Status</th><th style="${td}">Off-nadir</th><th style="${td}">Range</th><th style="${td}">Orbit data epoch</th><th style="${td}">Next AOS</th><th style="${td}">Next LOS</th></tr>${rows}</table>`;
 }
 function buildSecList() {
   const box = document.getElementById("s2List"); box.innerHTML = "";
@@ -609,21 +615,17 @@ function loadSecs(text, show) {
     const list = parseInput(text).map(makeSat);
     if (!list.length) throw new Error("No satellite data found.");
     list.forEach((q, i) => { q.color = PALETTE[i % PALETTE.length]; q.show = show ? show.includes(q.cat) : DEFAULT_SEC.test(q.name); });
-    list.forEach(q => {   // per-satellite updates downloaded earlier take precedence over the loaded list
-      const o = secOver[q.cat];
-      if (o) try { const n = makeSat(o); q.rec = n.rec; q.period = n.period; q.incl = n.incl; } catch (e) {}
-    });
     secs = list; buildSecList();
     msg.textContent = "Loaded " + secs.length + " secondary satellite(s). Tick the ones to plot.";
   } catch (e) { msg.textContent = "Could not load secondary satellites: " + e.message; }
   draw();
 }
-document.getElementById("s2Load").onclick = () => { src2 = { type: "text", url: "" }; secOver = {}; loadSecs(document.getElementById("txt2").value); };
+document.getElementById("s2Load").onclick = () => { src2 = { type: "text", url: "" }; loadSecs(document.getElementById("txt2").value); };
 document.getElementById("s2File").onchange = e => {
-  const f = e.target.files[0]; if (f) f.text().then(t => { document.getElementById("txt2").value = t; src2 = { type: "text", url: "" }; secOver = {}; loadSecs(t); });
+  const f = e.target.files[0]; if (f) f.text().then(t => { document.getElementById("txt2").value = t; src2 = { type: "text", url: "" }; loadSecs(t); });
 };
 const fetchSecs = () => fetchText(document.getElementById("s2Url").value)
-  .then(t => { document.getElementById("txt2").value = t; src2 = { type: "url", url: document.getElementById("s2Url").value, at: Date.now() }; secOver = {}; loadSecs(t); })
+  .then(t => { document.getElementById("txt2").value = t; src2 = { type: "url", url: document.getElementById("s2Url").value, at: Date.now() }; loadSecs(t); })
   .catch(e => { if (!e.handled) document.getElementById("msg").textContent = "Secondary download failed" + (e.status ? ": " + httpDesc(e.status) : "") + " (check the address and your connection)."; });
 document.getElementById("s2Fetch").onclick = fetchSecs;
 document.getElementById("s2All").onclick = () => { secs.forEach(q => { q.show = true; q.cb.checked = true; }); draw(); };
@@ -665,8 +667,6 @@ function collect(withText) {
     selCat: sats[selected] ? sats[selected].cat : null,
     pShow: sats.filter(q => q.show).map(q => q.cat),
     sShow: secs.filter(q => q.show).map(q => q.cat),
-    sOver: Object.keys(secOver).map(k => secOver[k]),
-    pOver: Object.keys(priOver).map(k => priOver[k]),
     gs: gs ? { name: gs.name, lat: gs.lat, lon: gs.lon, minEl: gs.minEl } : null
   };
   if (withText) { o.p.text = txt.value; o.s.text = txt2.value; }
@@ -722,10 +722,35 @@ function fetchText(url) {
     return r.text();
   });   // a failure with no readable response (e.g. network trouble) does not trigger the pause
 }
+function tleToKvn(q) {
+  const t = q.tle, l1 = t.l1, l2 = t.l2;
+  const ex = f => { const m = f.match(/^\s*([+-]?)(\d+)([+-]\d)\s*$/); return m ? Number((m[1] === "-" ? "-" : "") + "0." + m[2] + "e" + m[3]) : 0; };
+  const yy = l1.slice(9, 11).trim(), ln = l1.slice(11, 14).trim(), pc = l1.slice(14, 17).trim();
+  const oid = yy ? (parseInt(yy, 10) < 57 ? "20" : "19") + yy + "-" + ln + pc : "";
+  const out = [
+    "CCSDS_OMM_VERS = 2.0", "",
+    "OBJECT_NAME = " + t.name, "OBJECT_ID = " + oid, "CENTER_NAME = EARTH", "REF_FRAME = TEME", "TIME_SYSTEM = UTC",
+    "MEAN_ELEMENT_THEORY = SGP4", "",
+    "EPOCH = " + new Date(q.epoch).toISOString().slice(0, 23),
+    "MEAN_MOTION = " + l2.slice(52, 63).trim(),
+    "ECCENTRICITY = 0." + l2.slice(26, 33).trim(),
+    "INCLINATION = " + l2.slice(8, 16).trim(),
+    "RA_OF_ASC_NODE = " + l2.slice(17, 25).trim(),
+    "ARG_OF_PERICENTER = " + l2.slice(34, 42).trim(),
+    "MEAN_ANOMALY = " + l2.slice(43, 51).trim(),
+    "EPHEMERIS_TYPE = 0", "CLASSIFICATION_TYPE = " + (l1[7] || "U"),
+    "NORAD_CAT_ID = " + decodeCat(l1.slice(2, 7)),
+    "ELEMENT_SET_NO = " + (l1.slice(64, 68).trim() || "999"),
+    "REV_AT_EPOCH = " + (l2.slice(63, 68).trim() || "0"),
+    "BSTAR = " + ex(l1.slice(53, 61)),
+    "MEAN_MOTION_DOT = " + parseFloat(l1.slice(33, 43)),
+    "MEAN_MOTION_DDOT = " + ex(l1.slice(44, 52)), ""];
+  return out.join("\n");
+}
 /* Download each ticked satellite's latest elements from CelesTrak, one request per satellite.
    Only the data used by the page changes; an opened file is untouched. which: "p" = primary, "s" = secondary */
 async function updateFromCelestrak(which) {
-  const P = which === "p", list = P ? sats : secs, over = P ? priOver : secOver, label = P ? "primary" : "secondary";
+  const P = which === "p", list = P ? sats : secs, label = P ? "primary" : "secondary";
   const msg = document.getElementById("msg"), btn = document.getElementById(P ? "s1Update" : "s2Update");
   const todo = list.filter(q => q.show);
   if (!todo.length) { msg.textContent = "Tick the " + label + " satellites to update first."; return; }
@@ -738,8 +763,8 @@ async function updateFromCelestrak(which) {
       const t = await fetchText("https://celestrak.org/NORAD/elements/gp.php?CATNR=" + q.cat + "&FORMAT=KVN");
       const e = parseInput(t)[0]; if (!e) throw new Error("no data");
       const n = makeSat(e); if (n.cat !== q.cat) throw new Error("wrong satellite");
-      q.rec = n.rec; q.period = n.period; q.incl = n.incl; q.pred = null; q.sunPred = null;
-      over[q.cat] = { cat: q.cat, name: e.name, l1: e.l1, l2: e.l2, at: Date.now() };
+      q.rec = n.rec; q.period = n.period; q.incl = n.incl; q.epoch = n.epoch; q.upd = Date.now(); q.pred = null; q.sunPred = null;
+      q.tle = { name: q.name, l1: e.l1, l2: e.l2, raw: e.raw || t.trim() };   // raw = CelesTrak's text, unchanged
       ok++;
     } catch (err) {
       if (err.handled) { stopped = true; break; }   // CelesTrak queries are paused: stop asking
@@ -748,8 +773,9 @@ async function updateFromCelestrak(which) {
     if (i < todo.length - 1) await new Promise(r => setTimeout(r, 500));
   }
   btn.disabled = false;
+  if (ok) (P ? txt : txt2).value = list.map(q => q.tle.raw ? q.tle.raw + "\n" : tleToKvn(q)).join("\n");   // the box now shows the data actually in use
   if (P) { if (gs) gs.pred = null; secs.forEach(q => { q.pred = null; }); }   // predictions depend on the primary's orbit
-  msg.textContent = "Updated " + ok + " of " + todo.length + " " + label + " satellite(s) from CelesTrak (your file is unchanged)." +
+  msg.textContent = "Updated " + ok + " of " + todo.length + " " + label + " satellite(s) from CelesTrak (your file is unchanged; the text box now shows the data in use)." +
     (failed.length ? " No data for: " + failed.join(", ") + "." : "") +
     (stopped ? " Stopped early because CelesTrak queries are paused." : "");
   draw();
@@ -761,8 +787,8 @@ function applySettings(st) {
   if (st.gs) { set("gsName", st.gs.name); set("gsLat", st.gs.lat); set("gsLon", st.gs.lon); set("gsEl", st.gs.minEl); applyGs(); }
   else gs = null;
   // Use the saved copy of the orbit data straight away, then refresh from the web address if there is one
-  if (st.p && st.p.text) { priOver = {}; (st.pOver || []).forEach(o => { priOver[o.cat] = o; }); txt.value = st.p.text; src1 = { type: st.p.type, url: st.p.url || "", at: st.p.at || 0 }; loadText(st.p.text, { selCat: st.selCat, show: st.pShow }); }
-  if (st.s && st.s.text) { txt2.value = st.s.text; src2 = { type: st.s.type, url: st.s.url || "", at: st.s.at || 0 }; secOver = {}; (st.sOver || []).forEach(o => { secOver[o.cat] = o; }); loadSecs(st.s.text, st.sShow); }
+  if (st.p && st.p.text) { txt.value = st.p.text; src1 = { type: st.p.type, url: st.p.url || "", at: st.p.at || 0 }; loadText(st.p.text, { selCat: st.selCat, show: st.pShow }); }
+  if (st.s && st.s.text) { txt2.value = st.s.text; src2 = { type: st.s.type, url: st.s.url || "", at: st.s.at || 0 }; loadSecs(st.s.text, st.sShow); }
   if (st.p && st.p.type === "url" && st.p.url) set("url", st.p.url);
   if (st.s && st.s.type === "url" && st.s.url) set("s2Url", st.s.url);
   const old = x => !x.at || Date.now() - x.at > MAX_AGE;   // refresh only if the saved download is over a day old
@@ -773,14 +799,14 @@ function applySettings(st) {
     fetchText(pUrl).then(t => {
       if (!parseInput(t).length) return;
       const cur = { selCat: sats[selected] && sats[selected].cat, show: sats.filter(q => q.show).map(q => q.cat) };
-      priOver = {}; txt.value = t; src1 = { type: st.p.type === "url" ? "url" : "default", url: st.p.type === "url" ? pUrl : "", at: Date.now() }; loadText(t, cur);
+      txt.value = t; src1 = { type: st.p.type === "url" ? "url" : "default", url: st.p.type === "url" ? pUrl : "", at: Date.now() }; loadText(t, cur);
     }).catch(() => {});
   }
   if (sUrl) {
     if (st.s.type === "url") set("s2Url", sUrl);
     fetchText(sUrl).then(t => {
       if (!parseInput(t).length) return;
-      secOver = {}; txt2.value = t; src2 = { type: st.s.type === "url" ? "url" : "default", url: st.s.type === "url" ? sUrl : "", at: Date.now() }; loadSecs(t, secs.filter(q => q.show).map(q => q.cat));
+      txt2.value = t; src2 = { type: st.s.type === "url" ? "url" : "default", url: st.s.type === "url" ? sUrl : "", at: Date.now() }; loadSecs(t, secs.filter(q => q.show).map(q => q.cat));
     }).catch(() => {});
   }
   const kept = [];
@@ -822,7 +848,7 @@ if (saved && saved.v === 1 && saved.p && saved.p.text) {
   txt.value = SAMPLE;
   loadText(SAMPLE);
   // Try to replace the sample with current ISS elements from CelesTrak
-  fetchText(ISS_URL).then(t => { if (parseInput(t).length) { txt.value = t; src1 = { type: "url", url: ISS_URL, at: Date.now() }; priOver = {}; loadText(t); } }).catch(() => {});
+  fetchText(ISS_URL).then(t => { if (parseInput(t).length) { txt.value = t; src1 = { type: "url", url: ISS_URL, at: Date.now() }; loadText(t); } }).catch(() => {});
   fetchSecs();
 }
 updateHold();
